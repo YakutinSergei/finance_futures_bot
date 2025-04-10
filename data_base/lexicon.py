@@ -60,8 +60,8 @@ message_text = {
         'en': '✅  Price Down %: {}%'
     },
     'enter_growth_percent': {
-        'ru': 'Введите процент роста (от 3.0 до 100.0)',
-        'en': 'Enter growth percentage (from 3.0 to 100.0)'
+        'ru': 'Введите процент роста (от 2.0 до 100.0)',
+        'en': 'Enter growth percentage (from 2.0 to 100.0)'
     },
     'enter_drawdown_percent': {
         'ru': 'Введите процент просадки (от 1.0 до 100.0)',
