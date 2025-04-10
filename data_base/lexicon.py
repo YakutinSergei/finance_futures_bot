@@ -48,12 +48,16 @@ message_text = {
         'en': '❌ Invalid format. Please enter a number (e.g. 5.0)'
     },
     'percent_out_of_range': {
-        'ru': '❌ Значение должно быть от 3.0 до 100.0',
-        'en': '❌ Value must be between 3.0 and 100.0'
+        'ru': '❌ Значение должно быть от 2.0 до 100.0',
+        'en': '❌ Value must be between 2.0 and 100.0'
     },
     'percent_saved': {
         'ru': '✅ Процент роста сохранен: {}%',
-        'en': '✅ Growth percentage saved: {}%'
+        'en': '✅ Price UP %: {}%'
+    },
+    'percent_drawdown': {
+        'ru': '✅  Процент просадки сохранен: {}%',
+        'en': '✅  Price Down %: {}%'
     },
     'enter_growth_percent': {
         'ru': 'Введите процент роста (от 3.0 до 100.0)',

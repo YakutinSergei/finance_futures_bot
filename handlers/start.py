@@ -253,7 +253,7 @@ async def process_Procent_down(message: Message, state: FSMContext):
     if is_valid:
         await update_down_percent(tg_id, value)
         await message.answer(
-            text=message_text['percent_saved'][lang].format(value),
+            text=message_text['percent_drawdown'][lang].format(value),
             reply_markup=await start_keyboard(lang)
         )
         await state.clear()

@@ -202,7 +202,7 @@ def validate_percent_input(text: str) -> tuple[bool, float | None, str | None]:
     except ValueError:
         return False, None, "not_a_number"
 
-    if value < 3.0:
+    if value < 2.0:
         return False, None, "too_small"
     elif value > 100.0:
         return False, None, "too_large"
