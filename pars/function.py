@@ -1,70 +1,210 @@
-import json
+import asyncio
+import datetime
+from typing import Dict, List
+import logging
+from aiogram.exceptions import TelegramAPIError
+
+from ConfigData.redis import get_redis_data
+from create_bot import bot
+from data_base.lexicon import message_text, buttons_text
+from data_base.orm import get_users_alerts
+from keyboards.inline_keyboards import kb_pair_coinglass
+
+# Настройка логгирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
-# Пример функции для обработки данных
-async def process_market_data(coinglass_data, binance_data):
-    # Словарь для итоговых данных
-    result = {}
+async def check_alerts(
+        users: List[Dict],
+        redis_data: Dict[str, Dict],
+):
+    """Сравнивает данные пользователей с рыночными данными"""
+    try:
+        logger.info("Начало проверки алертов")
+        if not users:
+            logger.warning("Список пользователей пуст")
+            return
 
-    for pair, binance_values in binance_data.items():
-        # Парсим название пары (например, 'PARTIUSDC' => 'PARTIUSDC')
-        symbol = pair
+        if not redis_data:
+            logger.warning("Данные из Redis отсутствуют")
+            return
 
-        # Получаем цену из данных Coinglass
-        if symbol[:3] in coinglass_data:  # Проверка, если такая пара есть в coinglass
-            coinglass_price = float(coinglass_data[symbol[:3]].replace('$', '').replace('B', '').replace('T',
-                                                                                                         '').replace('M',
-                                                                                                         ''))  # Преобразуем цену в float
-        else:
-            coinglass_price = None  # Если нет данных по этой паре в coinglass
+        logger.debug(f"Получено {len(users)} пользователей и {len(redis_data)} пар из Redis")
 
-        # Результат для каждой пары
-        pair_result = {}
+        # Получаем текущее время
+        current_datetime = datetime.datetime.now()
+        current_time_str = current_datetime.strftime("%H:%M")
 
-        # Перебираем значения от 0 до 30
-        for minute in range(30, -1, -1):
-            # Получаем цену и открытый интерес для текущей минуты
-            price, OI = binance_values.get(str(minute), ["-", "-"])
+        for user in users:
+            if user['role'] != 'free':
+                try:
+                    # Валидация данных пользователя
+                    if not all(key in user for key in ['time_interval', 'percent_up', 'percent_down', 'telegram_id']):
+                        logger.error(f"Некорректные данные пользователя: {user}")
+                        continue
 
-            # Если цена и OI доступны
-            if price != "-" and price != "-" and OI != "-":
-                price = float(price)
-                OI = float(OI)
-                percent_price_change = 0
-                percent_OI_change = 0
+                    time_int = user['time_interval']
+                    percent_up = user['percent_up']
+                    #percent_down = user['percent_down']
+                    telegram_id = user['telegram_id']
+                    lang = user['lang']
 
-                # Если есть значение для 0 минуты, считаем разницу
-                if minute == 0 and coinglass_price is not None:
-                    percent_price_change = ((price - coinglass_price) / coinglass_price) * 100
-                    percent_OI_change = 0  # Для первого элемента отклонение от OI не рассчитываем
+                    # Вычисляем историческое время (текущее время - time_int минут)
+                    historical_datetime = current_datetime - datetime.timedelta(minutes=time_int)
+                    historical_time_str = historical_datetime.strftime("%H:%M")
 
-                elif minute != 0:
-                    # Рассчитываем изменения в процентах от предыдущей минуты
-                    prev_price = float(binance_values.get(str(minute - 1), [None, None])[0])
-                    prev_OI = float(binance_values.get(str(minute - 1), [None, None])[1])
+                    for pair, prices in redis_data.items():
+                        try:
+                            # Получаем текущую цену
+                            current_price_data = prices.get(current_time_str)
+                            if not current_price_data or len(current_price_data) < 1 or current_price_data[0] == 0:
+                                logger.debug(f"Нет текущей цены для пары {pair} в {current_time_str}")
+                                continue
 
-                    if prev_price and prev_price != "-":
-                        percent_price_change = ((price - prev_price) / prev_price) * 100
+                            current_price = current_price_data[0]
 
-                    if prev_OI and prev_OI != "-":
-                        percent_OI_change = ((OI - prev_OI) / prev_OI) * 100
+                            # Получаем историческую цену
+                            historical_price_data = prices.get(historical_time_str)
+                            if not historical_price_data or historical_price_data[0] == 0:
+                                logger.debug(
+                                    f"Нет исторической цены для пары {pair} за {time_int} мин (ищем {historical_time_str})")
+                                continue
 
-                pair_result[minute] = {
-                    'price': price,
-                    'percent_price': round(percent_price_change, 2),
-                    'OI': OI,
-                    'percent_OI': round(percent_OI_change, 2),
-                }
+                            historical_price = historical_price_data[0]
+
+                            # Расчет изменения цены
+                            try:
+                                change_percent = ((current_price - historical_price) / historical_price) * 100
+                            except ZeroDivisionError:
+                                logger.error(f"Деление на ноль при расчете для пары {pair}")
+                                continue
+
+                            # Проверка триггеров
+                            try:
+                                if change_percent >= percent_up:
+                                    message = (
+                                        f"🏦 Binance - ⏱️ {time_int}M - <code>{pair}</code>\n"
+                                        f"🔄 {buttons_text['Percentage_of_growth'][f'{lang}']}:⬆️ {change_percent:.2f}%\n"
+                                        f"💵 {message_text['Current_Price'][f'{lang}']}: {current_price}"
+                                    )
+                                    await bot.send_message(
+                                        chat_id=telegram_id,
+                                        text=message,
+                                        reply_markup=await kb_pair_coinglass(pair)
+                                    )
+                                    logger.info(f"Оповещение о росте {pair} для {telegram_id}")
+
+                                elif change_percent <= -percent_up:
+                                    message = (
+                                        f"🏦 Binance - ⏱️ {time_int}M - <code>{pair}</code>\n"
+                                        f"🔄 {buttons_text['Drawdown_percentage'][f'{lang}']}: ⬇️{change_percent:.2f}%\n"
+                                        f"💵 {message_text['Current_Price'][f'{lang}']}: {current_price}"
+                                    )
+                                    await bot.send_message(
+                                        chat_id=telegram_id,
+                                        text=message,
+                                        reply_markup=await kb_pair_coinglass(pair)
+                                    )
+                                    logger.info(f"Оповещение о падении {pair} для {telegram_id}")
+
+                            except TelegramAPIError as e:
+                                logger.error(f"Ошибка Telegram для {telegram_id}: {str(e)}")
+                                break
+                            except Exception as e:
+                                logger.error(f"Неожиданная ошибка отправки: {str(e)}")
+
+                        except Exception as e:
+                            logger.error(f"Ошибка обработки пары {pair}: {str(e)}", exc_info=True)
+
+                except Exception as e:
+                    logger.error(f"Ошибка обработки пользователя {user.get('telegram_id', 'unknown')}: {str(e)}",
+                                 exc_info=True)
+
+    except Exception as e:
+        logger.critical(f"Критическая ошибка check_alerts: {str(e)}", exc_info=True)
+    finally:
+        logger.info("Завершение проверки алертов")
+
+
+async def monitor_prices():
+    """Основная функция для периодического мониторинга"""
+    while True:
+        try:
+            logger.info("Начало цикла мониторинга цен")
+
+            # 1. Получаем данные пользователей
+            try:
+                users = await get_users_alerts()
+                logger.debug(f"Получено {len(users)} пользователей из БД")
+            except Exception as e:
+                logger.error(f"Ошибка получения пользователей из БД: {e}")
+                users = []
+
+            # 2. Получаем данные из Redis
+            try:
+                redis_data = await get_redis_data()
+                logger.debug(f"Получено {len(redis_data)} пар из Redis")
+            except Exception as e:
+                logger.error(f"Ошибка получения данных из Redis: {e}")
+                redis_data = {}
+
+            # 3. Проверяем условия
+            if users and redis_data:
+                await check_alerts(users, redis_data)
             else:
-                # Если данных нет, добавляем символ "-" для всех значений
-                pair_result[minute] = {
-                    'price': "-",
-                    'percent_price': "-",
-                    'OI': "-",
-                    'percent_OI': "-",
-                }
+                logger.warning("Пропуск проверки алертов из-за отсутствия данных")
 
-        # Добавляем результаты по паре в итоговый результат
-        result[symbol] = pair_result
+        except asyncio.CancelledError:
+            logger.info("Мониторинг цен остановлен")
+            break
+        except Exception as e:
+            logger.critical(f"Критическая ошибка в monitor_prices: {e}", exc_info=True)
+        finally:
+            # Ожидаем 1 минуту перед следующей проверкой
+            try:
+                logger.info("Ожидание следующей итерации...")
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                logger.info("Мониторинг цен остановлен")
+                break
+            except Exception as e:
+                logger.critical(f"Ошибка при ожидании: {e}")
+                await asyncio.sleep(60)  # Повторная попытка после ошибки
 
-    return result
+
+def is_valid_period(text: str) -> bool:
+    """
+    Проверяет, что текст представляет собой целое число от 1 до 30
+
+    :param text: Входной текст для проверки
+    :return: True если текст соответствует требованиям, иначе False
+    """
+    try:
+        number = int(text)
+        return 1 <= number <= 30
+    except ValueError:
+        return False
+
+
+def validate_percent_input(text: str) -> tuple[bool, float | None, str | None]:
+    """
+    Расширенная проверка с возвратом причины ошибки
+
+    :param text: Входной текст
+    :return: (валидность, число или None, сообщение об ошибке или None)
+    """
+    try:
+        value = float(text)
+    except ValueError:
+        return False, None, "not_a_number"
+
+    if value < 3.0:
+        return False, None, "too_small"
+    elif value > 100.0:
+        return False, None, "too_large"
+
+    return True, value, None

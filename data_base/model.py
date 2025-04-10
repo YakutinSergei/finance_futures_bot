@@ -1,18 +1,38 @@
 import datetime
 
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import text, ForeignKey, BigInteger, String, Float
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import ForeignKey, BigInteger, String, Float, DateTime, func
 from data_base.database import Base
 
 
-class UserORM(Base):
-    __tablename__ = 'user'
-
+# Модель пользователя
+class User(Base):
+    """Модель пользователя системы. Хранит основную информацию о пользователе телеграм."""
+    __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(nullable=True)
-    create_at: Mapped[datetime.datetime] = mapped_column(server_default=text("TIMEZONE('utc', now())"))
-    referrer: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
-    bet: Mapped[float] = mapped_column(default=0.0)
-    role: Mapped[str] = mapped_column(String, default="user")  # admin, user, brigadier
-    check: Mapped[bool] = mapped_column(default=False)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String, default="free")  # free, premium, admin,
+    subscription: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    language: Mapped[str] = mapped_column(String, default="en")
+    alerts = relationship("Alert", back_populates="user")
+
+
+# Модель для хранения настроек оповещений
+class Alert(Base):
+    """Настройки оповещений пользователей."""
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    time_interval: Mapped[int] = mapped_column(nullable=False, default=5)  # Время отслеживания в минутах (от 1 до 30)
+    percent_up: Mapped[float] = mapped_column(nullable=False, default= 5)  # Процент роста цены
+    percent_down: Mapped[float] = mapped_column(nullable=False, default= 5)  # Процент падения цены
+    user = relationship("User", back_populates="alerts")
+
+# Модель данных по торговым парам
+class PriceData(Base):
+    __tablename__ = "price_data"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pair: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[float] = mapped_column(nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())  # Автоматическое время записи
+
