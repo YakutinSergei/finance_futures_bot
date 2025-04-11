@@ -9,7 +9,7 @@ from create_bot import bot, dp
 from data_base.orm import create_tables, clean_old_data
 from handlers import start
 from pars.binance import binance_ws_listener
-from pars.function import monitor_prices
+#from pars.function import monitor_prices
 
 env = Env()
 env.read_env()
@@ -40,8 +40,8 @@ async def main():
 
     # # Запускаем фоновые задачи
     asyncio.create_task(binance_ws_listener())
-    asyncio.create_task(clean_old_data())
-    asyncio.create_task(monitor_prices())
+    # asyncio.create_task(clean_old_data())
+    # asyncio.create_task(monitor_prices())
 
 
     # Запускаем Telegram-бота

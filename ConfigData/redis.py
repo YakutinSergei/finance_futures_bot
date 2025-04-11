@@ -7,64 +7,77 @@ from redis.asyncio import Redis
 redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 
-def calculate_percentage_diff(current_price, old_price):
+def calculate_percentage_diff(current_price: float, old_price: float) -> float:
     if old_price == 0:
-        return 0
+        return 0.0
     return ((current_price - old_price) / old_price) * 100
 
 
-def get_time_keys():
-    """Генерирует список временных ключей за последние 30 минут"""
+def get_time_keys() -> list:
+    """Генерирует список ключей формата HH:MM:SS за последние 30 минут (по секундам)"""
     now = datetime.now()
-    time_keys = []
-    for minutes_ago in range(0, 31):
-        time = now - timedelta(minutes=minutes_ago)
-        time_keys.append(time.strftime("%H:%M"))
-    return time_keys
+    return [
+        (now - timedelta(seconds=i)).strftime("%H:%M:%S")
+        for i in range(0, 31 * 60)  # 31 минута в секундах
+    ]
 
 
-async def update_redis_data(pair, current_price):
-    current_time = datetime.now().strftime("%H:%M")
+async def update_redis_data(pair: str, current_price: float, event_time_ms: int):
+    """
+    Обновляет Redis-ключ с историей цен для торговой пары в формате HH:MM:SS.
+
+    :param pair: Название пары, например 'BTCUSDT'
+    :param current_price: Последняя цена
+    :param event_time_ms: Время события в миллисекундах
+    """
+    # Время события в формате HH:MM:SS
+    event_time = datetime.fromtimestamp(int(event_time_ms) / 1000)
+    event_time_str = event_time.strftime("%H:%M:%S")
+
+    # Получаем историю цен из Redis
     existing_data = await redis_client.get(pair)
+    price_history = json.loads(existing_data) if existing_data else {}
 
-    if existing_data:
-        price_history = json.loads(existing_data)
-    else:
-        price_history = {}
-        await redis_client.expire(pair, 1860)  # TTL 31 минута
+    # Обновляем цену на текущее время
+    price_history[event_time_str] = [current_price, 0]
 
-    updated_history = {}
-    updated_history[current_time] = [current_price, 0]  # Текущее время и цена
-
-    # Получаем список временных меток за последние 30 минут
+    # Получаем ключи за последние 30 минут (по секундам)
     time_keys = get_time_keys()
 
-    for time_key in time_keys[1:]:  # Пропускаем текущее время (первый элемент)
+    # Пересчитываем процент изменений по отношению к текущей цене
+    for time_key in time_keys:
+        if time_key == event_time_str:
+            continue
         if time_key in price_history:
             old_price = price_history[time_key][0]
             percent_diff = calculate_percentage_diff(current_price, old_price)
-            updated_history[time_key] = [old_price, round(percent_diff, 4)]
-        else:
-            updated_history[time_key] = [0, 0]
+            price_history[time_key] = [old_price, round(percent_diff, 4)]
 
-    # Удаляем старые записи (старше 30 минут)
-    for key in list(updated_history.keys()):
-        if key not in time_keys:
-            del updated_history[key]
-    await redis_client.set(pair, json.dumps(updated_history))
-    await redis_client.expire(pair, 1860)
+    # Удаляем ключи старше 31 минуты
+    price_history = {k: v for k, v in price_history.items() if k in time_keys}
+
+    # Сохраняем в Redis и обновляем TTL
+    await redis_client.set(pair, json.dumps(price_history))
+    await redis_client.expire(pair, 1860)  # 31 минута
 
 
-# 2. Получение данных из Redis
-async def get_redis_data() -> Dict[str, Dict]:
-    """Получает все данные по парам из Redis"""
-    data = {}
-    # Получаем все ключи (пары)
-    keys = await redis_client.keys("*")
+async def get_redis_data_for_pair(pair: str) -> dict:
+    """
+    Получает историю цен для конкретной пары из Redis.
 
-    for pair in keys:
-        value = await redis_client.get(pair)
-        if value:
-            data[pair] = json.loads(value)
+    :param pair: Название торговой пары, например 'BTCUSDT'.
+    :return: История цен для пары в виде словаря, например:
+             {
+                 'HH:MM:SS': [price, percent_diff],
+                 ...
+             }
+    """
+    # Получаем данные из Redis для указанной пары
+    data = await redis_client.get(pair)
 
-    return data
+    if data:
+        # Если данные есть, парсим JSON и возвращаем
+        return json.loads(data)
+    else:
+        # Если данных нет, возвращаем пустой словарь
+        return {}

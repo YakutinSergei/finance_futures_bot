@@ -1,7 +1,13 @@
 import asyncio
+import json
+import time
 
 from datetime import datetime, timedelta, UTC
+from typing import List
 
+from sqlalchemy.orm import selectinload
+
+from ConfigData.redis import redis_client
 from data_base.database import engine_asinc, Base
 from sqlalchemy import update, delete
 
@@ -358,3 +364,69 @@ async def extend_subscription(
             await session.rollback()
             print(f"Error updating growth percent: {e}")
             raise Exception(f"Ошибка при продлении подписки: {str(e)}")
+
+
+'''Кэширование объектов'''
+# Ключи для хранения данных и времени последнего обновления
+ALERTS_KEY = "alerts_cache"
+LAST_ALERTS_UPDATE_KEY = "last_alerts_update"
+
+
+async def get_cached_alerts_with_users(ttl: int = 15) -> List[dict]:
+    """
+    Получает алерты из кэша, если не истёк TTL (время жизни).
+    Если TTL истёк — обновляет из базы.
+    """
+    current_time = time.time()
+
+    # Получаем время последнего обновления из Redis
+    last_update = await redis_client.get(LAST_ALERTS_UPDATE_KEY)
+
+    if last_update:
+        # Конвертируем время последнего обновления из строки в float
+        last_update = float(last_update)
+    else:
+        last_update = 0
+
+    if current_time - last_update > ttl:
+        print("🔄 Обновление кэша алертов из базы...")
+        async with async_session() as session:
+            result = await session.execute(
+                select(Alert, User)  # Мы явно выбираем нужные сущности
+                .join(User)
+                .filter(User.role != 'free')  # Фильтруем пользователей с ролью, не равной 'free'
+                .options(selectinload(Alert.user))  # Заранее подгружаем связь Alert.user
+            )
+
+            # Сформируем список словарей из результата запроса
+            alerts = []
+            for alert, user in result.all():
+                alert_dict = alert.to_dict()  # Преобразуем Alert в словарь
+                user_dict = {
+                    "id": user.id,
+                    "telegram_id": user.telegram_id,
+                    "role": user.role,
+                    "subscription": user.subscription.strftime('%Y-%m-%d %H:%M:%S'),
+                    "language": user.language
+                }
+                alert_dict["user"] = user_dict  # Добавляем информацию о пользователе в alert_dict
+                alerts.append(alert_dict)
+
+            # Кэшируем данные и время последнего обновления
+            await redis_client.set(ALERTS_KEY, json.dumps(alerts))
+            await redis_client.set(LAST_ALERTS_UPDATE_KEY, current_time)
+
+            # Устанавливаем TTL на кэшированные данные
+            await redis_client.expire(ALERTS_KEY, ttl)
+            await redis_client.expire(LAST_ALERTS_UPDATE_KEY, ttl)
+
+    else:
+        print("✅ Используем кэш алертов")
+        cached_data = await redis_client.get(ALERTS_KEY)
+        if cached_data:
+            # Если кэш есть, преобразуем его обратно в список словарей
+            alerts = json.loads(cached_data)
+        else:
+            alerts = []
+
+    return alerts
