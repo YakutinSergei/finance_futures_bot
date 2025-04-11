@@ -6,10 +6,8 @@ import logging
 from aiogram.exceptions import TelegramAPIError
 
 from ConfigData.redis import redis_client
-# from ConfigData.redis import get_redis_data
 from create_bot import bot
 from data_base.lexicon import message_text, buttons_text
-from data_base.orm import get_users_alerts
 from keyboards.inline_keyboards import kb_pair_coinglass
 
 # Настройка логгирования
@@ -130,52 +128,6 @@ async def check_alerts(
         logger.critical(f"Критическая ошибка check_alerts: {str(e)}", exc_info=True)
     finally:
         logger.info("Завершение проверки алертов")
-
-
-# async def monitor_prices():
-#     """Основная функция для периодического мониторинга"""
-#     while True:
-#         try:
-#             logger.info("Начало цикла мониторинга цен")
-#
-#             # 1. Получаем данные пользователей
-#             try:
-#                 users = await get_users_alerts()
-#                 logger.debug(f"Получено {len(users)} пользователей из БД")
-#             except Exception as e:
-#                 logger.error(f"Ошибка получения пользователей из БД: {e}")
-#                 users = []
-#
-#             # 2. Получаем данные из Redis
-#             try:
-#                 redis_data = await get_redis_data()
-#                 logger.debug(f"Получено {len(redis_data)} пар из Redis")
-#             except Exception as e:
-#                 logger.error(f"Ошибка получения данных из Redis: {e}")
-#                 redis_data = {}
-#
-#             # 3. Проверяем условия
-#             if users and redis_data:
-#                 await check_alerts(users, redis_data)
-#             else:
-#                 logger.warning("Пропуск проверки алертов из-за отсутствия данных")
-#
-#         except asyncio.CancelledError:
-#             logger.info("Мониторинг цен остановлен")
-#             break
-#         except Exception as e:
-#             logger.critical(f"Критическая ошибка в monitor_prices: {e}", exc_info=True)
-#         finally:
-#             # Ожидаем 1 минуту перед следующей проверкой
-#             try:
-#                 logger.info("Ожидание следующей итерации...")
-#                 await asyncio.sleep(60)
-#             except asyncio.CancelledError:
-#                 logger.info("Мониторинг цен остановлен")
-#                 break
-#             except Exception as e:
-#                 logger.critical(f"Ошибка при ожидании: {e}")
-#                 await asyncio.sleep(60)  # Повторная попытка после ошибки
 
 
 def is_valid_period(text: str) -> bool:
