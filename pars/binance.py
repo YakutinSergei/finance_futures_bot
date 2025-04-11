@@ -49,36 +49,41 @@ async def binance_ws_listener():
     """
     logger.info("[binance_ws_listener] Подключение к Binance WebSocket...")
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(BINANCE_WS_URL) as ws:
-                logger.info("[binance_ws_listener] Подключено к WebSocket Binance")
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(BINANCE_WS_URL) as ws:
+                    logger.info("[binance_ws_listener] Подключено к WebSocket Binance")
 
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        try:
-                            data = json.loads(msg.data)
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                data = json.loads(msg.data)
 
-                            if not isinstance(data, list):
-                                logger.warning("[binance_ws_listener] Получены данные не в виде списка")
-                                continue
+                                if not isinstance(data, list):
+                                    logger.warning("[binance_ws_listener] Получены данные не в виде списка")
+                                    continue
 
-                            alerts = await get_cached_alerts_with_users(ttl=15)
-                            logger.debug(f"[binance_ws_listener] Получено {len(data)} тикеров, {len(alerts)} алертов")
+                                alerts = await get_cached_alerts_with_users(ttl=15)
+                                logger.debug(f"[binance_ws_listener] Получено {len(data)} тикеров, {len(alerts)} алертов")
 
-                            tasks = [handle_ticker(ticker, alerts) for ticker in data]
-                            await asyncio.gather(*tasks)
+                                tasks = [handle_ticker(ticker, alerts) for ticker in data]
+                                await asyncio.gather(*tasks)
 
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"[binance_ws_listener] Ошибка декодирования JSON: {e}")
-                        except Exception as e:
-                            logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"[binance_ws_listener] Ошибка декодирования JSON: {e}")
+                            except Exception as e:
+                                logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
 
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        logger.error(f"[binance_ws_listener] Ошибка WebSocket-сообщения: {msg}")
-                        break
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            logger.error(f"[binance_ws_listener] Ошибка WebSocket-сообщения: {msg}")
+                            break
 
-    except aiohttp.ClientConnectorError as e:
-        logger.critical(f"[binance_ws_listener] Ошибка подключения к Binance WebSocket: {e}")
-    except Exception as e:
-        logger.exception(f"[binance_ws_listener] Необработанная ошибка: {e}")
+        except aiohttp.ClientConnectorError as e:
+            logger.critical(f"[binance_ws_listener] Ошибка подключения к Binance WebSocket: {e}")
+        except Exception as e:
+            logger.exception(f"[binance_ws_listener] Необработанная ошибка: {e}")
+
+        # Если соединение потеряно или произошла ошибка, ждем и пытаемся подключиться снова
+        logger.info("[binance_ws_listener] Попытка переподключения через 10 секунд...")
+        await asyncio.sleep(10)
