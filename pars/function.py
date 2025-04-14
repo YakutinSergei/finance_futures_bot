@@ -194,23 +194,6 @@ async def check_alert_for_user(alert_dict: dict, pair: str, prices: dict, price_
     percent_up = alert_dict['percent_up']
     percent_down = alert_dict['percent_down']
 
-    # Получаем данные о сработавших парах для пользователя из Redis
-    user_alert_key = f"{telegram_id}_alerts"  # Ключ для хранения информации о сработавших парах
-    user_alerts = await redis_client.get(user_alert_key)
-
-    # Если данных нет, создаем новый словарь для хранения
-    if user_alerts:
-        user_alerts = json.loads(user_alerts)
-    else:
-        user_alerts = {}
-
-    # Проверка, если эта пара уже была проверена в последние N минут
-    current_time = time.time()  # Текущее время в секундах
-    if pair in user_alerts:
-        last_check_time = user_alerts[pair]
-        if current_time - last_check_time < time_interval * 60:
-            #print(f"Пара {pair} уже проверялась недавно. Пропускаем.")
-            return  # Пропускаем выполнение, если пара уже проверялась недавно
 
     # Текущее время в формате HH:MM:SS
     current_datetime = datetime.datetime.now()
@@ -235,6 +218,23 @@ async def check_alert_for_user(alert_dict: dict, pair: str, prices: dict, price_
 
     # Проверка условия "рост >= порога"
     if change_percent >= percent_up:
+        # Получаем данные о сработавших парах для пользователя из Redis
+        user_alert_key = f"{telegram_id}_alerts"  # Ключ для хранения информации о сработавших парах
+        user_alerts = await redis_client.get(user_alert_key)
+
+        # Если данных нет, создаем новый словарь для хранения
+        if user_alerts:
+            user_alerts = json.loads(user_alerts)
+        else:
+            user_alerts = {}
+
+        # Проверка, если эта пара уже была проверена в последние N минут
+        current_time = time.time()  # Текущее время в секундах
+        if pair in user_alerts:
+            last_check_time = user_alerts[pair]
+            if current_time - last_check_time < time_interval * 60:
+                # print(f"Пара {pair} уже проверялась недавно. Пропускаем.")
+                return  # Пропускаем выполнение, если пара уже проверялась недавно
         message = (
             f"🏦 Binance - ⏱️ {time_interval}M - <code>{pair}</code>\n"
             f"🔄 {buttons_text['Percentage_of_growth'][f'{lang}']}: ⬆️ {change_percent:.2f}%\n"
@@ -242,7 +242,6 @@ async def check_alert_for_user(alert_dict: dict, pair: str, prices: dict, price_
         )
         try:
             await bot.send_message(chat_id=telegram_id, text=message, reply_markup=await kb_pair_coinglass(pair))
-
             # Обновляем время последней проверки для этой пары
             user_alerts[pair] = current_time
             await redis_client.set(user_alert_key, json.dumps(user_alerts), ex=time_interval * 60)  # Устанавливаем TTL
@@ -252,6 +251,23 @@ async def check_alert_for_user(alert_dict: dict, pair: str, prices: dict, price_
 
     # Проверка условия "падение >= порога"
     elif change_percent <= -percent_down:
+        # Получаем данные о сработавших парах для пользователя из Redis
+        user_alert_key = f"{telegram_id}_alerts"  # Ключ для хранения информации о сработавших парах
+        user_alerts = await redis_client.get(user_alert_key)
+
+        # Если данных нет, создаем новый словарь для хранения
+        if user_alerts:
+            user_alerts = json.loads(user_alerts)
+        else:
+            user_alerts = {}
+
+        # Проверка, если эта пара уже была проверена в последние N минут
+        current_time = time.time()  # Текущее время в секундах
+        if pair in user_alerts:
+            last_check_time = user_alerts[pair]
+            if current_time - last_check_time < time_interval * 60:
+                # print(f"Пара {pair} уже проверялась недавно. Пропускаем.")
+                return  # Пропускаем выполнение, если пара уже проверялась недавно
         message = (
             f"🏦 Binance - ⏱️ {time_interval}M - <code>{pair}</code>\n"
             f"🔄 {buttons_text['Drawdown_percentage'][f'{lang}']}: ⬇️ {change_percent:.2f}%\n"

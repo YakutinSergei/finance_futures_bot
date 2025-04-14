@@ -54,7 +54,6 @@ async def binance_ws_listener():
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(BINANCE_WS_URL) as ws:
                     logger.info("[binance_ws_listener] Подключено к WebSocket Binance")
-
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
