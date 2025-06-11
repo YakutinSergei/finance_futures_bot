@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import time
+from collections import defaultdict
 from typing import Any
 
 import aiohttp
@@ -22,12 +23,25 @@ async def process_tickers(tickers: list[dict], alerts: list[dict], historical_pr
     """
     Обрабатывает список тикеров без создания задач.
     """
+    # Группируем алерты по паре
+    alerts_by_pair = defaultdict(list)
+    for alert in alerts:
+        pair = alert.get('pair')
+        if pair:
+            alerts_by_pair[pair].append(alert)
+
+    # Создаём задачи на обработку тикеров
+    tasks = []
     for ticker in tickers:
         try:
-            await handle_ticker(ticker, alerts, historical_prices)
+            pair = ticker.get("s")
+            pair_alerts = alerts_by_pair.get(pair, [])
+            tasks.append(handle_ticker(ticker, pair_alerts, historical_prices))
         except Exception as e:
-            logger.exception(f"[process_tickers] Ошибка при обработке тикера: {ticker.get('s')}")
+            logger.exception(f"[process_tickers] Ошибка при подготовке тикера: {ticker.get('s')}")
 
+    # Параллельный запуск
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 async def get_bulk_price_history(pairs: set[str]) -> dict[str, dict[str, list[Any]]]:
     """
@@ -36,17 +50,17 @@ async def get_bulk_price_history(pairs: set[str]) -> dict[str, dict[str, list[An
     :return: Словарь формата { "BTCUSDT": { "12:00:00": [price, %], ... }, ... }
     """
     result = {}
-    for pair in pairs:
-        redis_key = f"{pair}"
-        raw_data = await redis_client.get(redis_key)
+    redis_keys = list(pairs)
+    redis_data = await redis_client.mget(*redis_keys)
+
+    for key, raw_data in zip(redis_keys, redis_data):
         if raw_data:
             try:
-                result[pair] = json.loads(raw_data)
+                result[key] = json.loads(raw_data)
             except json.JSONDecodeError:
-                logger.warning(f"[get_bulk_price_history] Ошибка декодирования JSON для пары {pair}")
-                result[pair] = {}
+                result[key] = {}
         else:
-            result[pair] = {}
+            result[key] = {}
 
     return result
 
@@ -68,7 +82,7 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Получаем сохранённую историю для этой пары
         redis_data = historical_prices.get(pair)
         if not redis_data:
-            logger.warning(f"[handle_ticker] Нет исторических данных по паре {pair}")
+            #logger.warning(f"[handle_ticker] Нет исторических данных по паре {pair}")
             return
 
         # Сортировка времени истории один раз
@@ -123,7 +137,7 @@ async def binance_ws_listener():
                             except Exception as e:
                                 logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
 
-                            if now - last_process_time >= 7:
+                            if now - last_process_time >= 10:
                                 if ticker_buffer:
                                     logger.info(f"[binance_ws_listener] Обработка {len(ticker_buffer)} тикеров")
 
