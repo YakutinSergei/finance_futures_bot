@@ -125,6 +125,7 @@ If you have any questions or issues, our support team is ready to help!
     },
 }
 
+
 buttons_text = {
     'settings': {
         'ru': '⚙️ Настройки',
