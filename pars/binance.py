@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import logging
 import time
@@ -14,6 +15,7 @@ BINANCE_WS_URL = "wss://fstream.binance.com/ws/!ticker@arr"
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
+
 
 
 async def process_tickers(tickers: list[dict], alerts: list[dict], historical_prices: dict):
@@ -66,16 +68,24 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Получаем сохранённую историю для этой пары
         redis_data = historical_prices.get(pair)
         if not redis_data:
+            logger.warning(f"[handle_ticker] Нет исторических данных по паре {pair}")
             return
 
-        # Фильтруем алерты только по нужной паре
-        # relevant_alerts = [a for a in alerts if a.get("pair") == pair]
-        # print(alerts)
+        # Сортировка времени истории один раз
+        sorted_price_keys = sorted(redis_data.keys())
+
+        # Подготовка текущего времени
+        now_dt = datetime.datetime.now()
+        now_ts = time.time()
+
+        # Создание задач
         tasks = [
-            check_alert_for_user(alert, pair, redis_data, price_now)
+            check_alert_for_user(alert, pair, redis_data, price_now, sorted_price_keys, now_dt, now_ts)
             for alert in alerts
         ]
-        await asyncio.gather(*tasks)
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     except Exception as e:
         logger.exception(f"[handle_ticker] Ошибка при обработке тикера {ticker}: {e}")
@@ -113,12 +123,11 @@ async def binance_ws_listener():
                             except Exception as e:
                                 logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
 
-                            if now - last_process_time >= 10:
+                            if now - last_process_time >= 7:
                                 if ticker_buffer:
                                     logger.info(f"[binance_ws_listener] Обработка {len(ticker_buffer)} тикеров")
 
                                     alerts = await get_cached_alerts_with_users(ttl=15)
-
                                     # Собираем все пары
                                     all_pairs = {ticker["s"] for ticker in ticker_buffer}
                                     historical_prices = await get_bulk_price_history(all_pairs)

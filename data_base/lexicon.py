@@ -109,10 +109,6 @@ After payment verification 🔍, the bot will be activated 🚀\n\n
 
 Если у вас есть вопросы или проблемы, наша служба поддержки готова помочь!
 
-⌛ Часы работы:
-Пн-Пт: 9:00-21:00 (МСК)
-Сб-Вс: 11:00-18:00 (МСК)
-
 📌 Перед обращением подготовьте:
 1. Ваш ID: `{}`
 2. Описание проблемы
@@ -121,10 +117,6 @@ After payment verification 🔍, the bot will be activated 🚀\n\n
         'en': '''🛠 *Customer Support*
 
 If you have any questions or issues, our support team is ready to help!
-
-⌛ Working hours:
-Mon-Fri: 9:00-21:00 (GMT+3)
-Sat-Sun: 11:00-18:00 (GMT+3)
 
 📌 Before contacting please prepare:
 1. Your ID: `{}`

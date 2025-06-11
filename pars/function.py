@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 import datetime
@@ -8,6 +9,7 @@ from aiogram.exceptions import TelegramAPIError
 from create_bot import bot
 from data_base.lexicon import message_text, buttons_text
 from keyboards.inline_keyboards import kb_pair_coinglass
+semaphore = asyncio.Semaphore(20)  # Максимум 20 одновременных задач
 
 # Настройка логгирования
 logging.basicConfig(
@@ -180,104 +182,76 @@ def get_nearest_available_price(prices, target_time):
 # Формат: {telegram_id: {pair: timestamp_of_last_send}}
 sent_alerts_cache: dict[int, dict[str, float]] = {}
 
-async def check_alert_for_user(alert_dict: dict, pair: str, prices: dict, price_now: float):
-    """
-    Проверяет, нужно ли отправить оповещение конкретному пользователю по данной паре.
-    Ограничивает повторную отправку для одной пары на 5 минут (без Redis).
-    """
-
+async def check_alert_for_user(
+    alert_dict: dict,
+    pair: str,
+    prices: dict,
+    price_now: float,
+    sorted_price_keys: list,
+    now_dt: datetime.datetime,
+    now_ts: float
+):
     try:
-        # Извлекаем данные пользователя из словаря алерта
-        user_data = alert_dict['user']
-        telegram_id = user_data['telegram_id']  # Telegram ID пользователя
-        lang = user_data['language']  # Язык пользователя (например, "en", "ru")
+        user = alert_dict["user"]
+        telegram_id = user["telegram_id"]
+        lang = user["language"]
 
-        # Параметры из самого алерта
-        time_interval = alert_dict['time_interval']  # Интервал (в минутах) для анализа изменений цены
-        percent_up = alert_dict['percent_up']        # Порог повышения (в процентах)
-        percent_down = alert_dict['percent_down']    # Порог понижения (в процентах)
+        interval = alert_dict["time_interval"]
+        up = alert_dict["percent_up"]
+        down = alert_dict["percent_down"]
 
-        # Текущее время
-        current_datetime = datetime.datetime.now()
+        # Рассчитываем историческое время
+        hist_dt = now_dt - datetime.timedelta(minutes=interval)
+        hist_time_str = hist_dt.strftime("%H:%M:%S")
+        nearest_time = get_nearest_available_price(sorted_price_keys, hist_time_str)
 
-        # Время, на которое нужно посмотреть назад (историческое)
-        historical_time = (current_datetime - datetime.timedelta(minutes=time_interval)).strftime("%H:%M:%S")
-
-
-        # Находим ближайшее время, доступное в истории
-        historical_time = get_nearest_available_price(prices, historical_time)
-
-        # Получаем данные цены из Redis для этого времени
-        historical_price_data = prices.get(historical_time)
-
-        # Если данные не найдены — выходим
-        if not historical_price_data:
+        # Извлекаем цену
+        hist_price_data = prices.get(nearest_time)
+        if not hist_price_data:
             return
 
-        # Получаем текущую и историческую цену
-        current_price = price_now
-        historical_price = historical_price_data[0]
-
-        # Защита от деления на ноль
-        if historical_price == 0:
+        hist_price = hist_price_data[0]
+        if hist_price == 0:
             return
 
-        # Расчёт процентного изменения цены
-        change_percent = ((current_price - historical_price) / historical_price) * 100
+        percent = ((price_now - hist_price) / hist_price) * 100
 
-        # Текущее время в секундах (для сравнения с последними отправками)
-        current_time = time.time()
-
-        # Получаем из кэша словарь пар, которым уже отправляли уведомления этому пользователю
-        user_alerts = sent_alerts_cache.get(telegram_id, {})
-
-        # Получаем время последней отправки по этой паре (если было)
-        last_sent_time = user_alerts.get(pair)
-
-        # Если уведомление по этой паре уже было отправлено менее 5 минут назад — ничего не делаем
-        if last_sent_time and current_time - last_sent_time < 5 * 60:
+        last_sent_time = sent_alerts_cache.get(telegram_id, {}).get(pair)
+        if last_sent_time and now_ts - last_sent_time < 5 * 60:
             return
 
+        # Готовим текст
+        grow_text = buttons_text['Percentage_of_growth'].get(lang, 'Growth')
+        drop_text = buttons_text['Drawdown_percentage'].get(lang, 'Drop')
+        price_text = message_text['Current_Price'].get(lang, 'Price')
 
-        # Если цена выросла выше заданного порога — формируем сообщение на рост
-        if change_percent >= percent_up:
-            message = (
-                f"🏦 Binance - ⏱️ {time_interval}M - <code>{pair}</code>\n"
-                f"🔄 {buttons_text['Percentage_of_growth'][f'{lang}']}: ⬆️ {change_percent:.2f}%\n"
-                f"💵 {message_text['Current_Price'][f'{lang}']}: {current_price}"
+        if percent >= up:
+            msg = (
+                f"🏦 Binance - ⏱️ {interval}M - <code>{pair}</code>\n"
+                f"🔄 {grow_text}: ⬆️ {percent:.2f}%\n"
+                f"💵 {price_text}: {price_now}"
             )
-
-        # Если цена упала ниже заданного порога — формируем сообщение на падение
-        elif change_percent <= -percent_down:
-            message = (
-                f"🏦 Binance - ⏱️ {time_interval}M - <code>{pair}</code>\n"
-                f"🔄 {buttons_text['Drawdown_percentage'][f'{lang}']}: ⬇️ {change_percent:.2f}%\n"
-                f"💵 {message_text['Current_Price'][f'{lang}']}: {current_price}"
+        elif percent <= -down:
+            msg = (
+                f"🏦 Binance - ⏱️ {interval}M - <code>{pair}</code>\n"
+                f"🔄 {drop_text}: ⬇️ {percent:.2f}%\n"
+                f"💵 {price_text}: {price_now}"
             )
-
-        # Если ни одно условие не выполнено — выходим
         else:
             return
 
-        # Отправка сообщения пользователю в Telegram
-        try:
+        # Отправка сообщения
+        async with semaphore:
             await bot.send_message(
                 chat_id=telegram_id,
-                text=message,
-                reply_markup=await kb_pair_coinglass(pair)  # Кнопки по паре (например, ссылка на Coinglass)
+                text=msg,
+                reply_markup=await kb_pair_coinglass(pair)
             )
 
-            # Сохраняем время последней отправки уведомления по этой паре
-            if telegram_id not in sent_alerts_cache:
-                sent_alerts_cache[telegram_id] = {}  # Создаём словарь для нового пользователя
+        # Обновляем кэш
+        sent_alerts_cache.setdefault(telegram_id, {})[pair] = now_ts
 
-            # Обновляем время отправки по текущей паре
-            sent_alerts_cache[telegram_id][pair] = current_time
-
-        except TelegramAPIError:
-            # Если не удалось отправить сообщение (например, пользователь заблокировал бота) — логируем
-            logger.warning(f"[check_alert_for_user] Не удалось отправить сообщение пользователю {telegram_id}")
-
+    except TelegramAPIError:
+        logger.warning(f"[check_alert_for_user] Не удалось отправить сообщение пользователю {telegram_id}")
     except Exception as e:
-        # Логируем любые неожиданные ошибки
-        logger.exception(f"[check_alert_for_user] Ошибка при обработке алерта: {e}")
+        logger.exception(f"[check_alert_for_user] Ошибка: {e}")

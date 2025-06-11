@@ -381,7 +381,6 @@ async def get_cached_alerts_with_users(ttl: int = 15) -> List[dict]:
 
     # Получаем время последнего обновления из Redis
     last_update = await redis_client.get(LAST_ALERTS_UPDATE_KEY)
-
     if last_update:
         # Конвертируем время последнего обновления из строки в float
         last_update = float(last_update)
@@ -389,7 +388,7 @@ async def get_cached_alerts_with_users(ttl: int = 15) -> List[dict]:
         last_update = 0
 
     if current_time - last_update > ttl:
-        #print("🔄 Обновление кэша алертов из базы...")
+        print("🔄 Обновление кэша алертов из базы...")
         async with async_session() as session:
             result = await session.execute(
                 select(Alert, User)  # Мы явно выбираем нужные сущности
@@ -421,7 +420,7 @@ async def get_cached_alerts_with_users(ttl: int = 15) -> List[dict]:
             await redis_client.expire(LAST_ALERTS_UPDATE_KEY, ttl)
 
     else:
-        #print("✅ Используем кэш алертов")
+        print("✅ Используем кэш алертов")
         cached_data = await redis_client.get(ALERTS_KEY)
         if cached_data:
             # Если кэш есть, преобразуем его обратно в список словарей
