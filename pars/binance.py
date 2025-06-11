@@ -53,6 +53,7 @@ async def get_bulk_price_history(pairs: set[str]) -> dict[str, dict[str, list[An
     redis_keys = list(pairs)
     redis_data = await redis_client.mget(*redis_keys)
 
+
     for key, raw_data in zip(redis_keys, redis_data):
         if raw_data:
             try:
