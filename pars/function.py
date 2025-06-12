@@ -191,6 +191,8 @@ async def check_alert_for_user(
     now_dt: datetime.datetime,
     now_ts: float
 ):
+    print("check_alert_for_user запущен")
+
     try:
         user = alert_dict["user"]
         telegram_id = user["telegram_id"]
@@ -207,6 +209,7 @@ async def check_alert_for_user(
 
         # Извлекаем цену
         hist_price_data = prices.get(nearest_time)
+
         if not hist_price_data:
             return
 
@@ -220,6 +223,7 @@ async def check_alert_for_user(
         if last_sent_time and now_ts - last_sent_time < 5 * 60:
             return
 
+        print(f'{percent=} {now_ts=} {last_sent_time=}')
         # Готовим текст
         grow_text = buttons_text['Percentage_of_growth'].get(lang, 'Growth')
         drop_text = buttons_text['Drawdown_percentage'].get(lang, 'Drop')

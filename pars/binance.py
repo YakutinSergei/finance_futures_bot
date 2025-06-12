@@ -92,13 +92,13 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Подготовка текущего времени
         now_dt = datetime.datetime.now()
         now_ts = time.time()
+        print(alerts)
 
         # Создание задач
         tasks = [
             check_alert_for_user(alert, pair, redis_data, price_now, sorted_price_keys, now_dt, now_ts)
             for alert in alerts
         ]
-
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -127,6 +127,7 @@ async def binance_ws_listener():
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
+                                print(data)
 
                                 if isinstance(data, list):
                                     ticker_buffer.extend(data)
