@@ -94,6 +94,7 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
 async def binance_ws_listener():
     """
     Слушает Binance WebSocket, накапливает тикеры и обрабатывает их каждые 10 секунд.
+    Сохраняются только последние значения уникальных торговых пар.
     """
     logger.info("[binance_ws_listener] Подключение к Binance WebSocket...")
 
@@ -103,7 +104,7 @@ async def binance_ws_listener():
                 async with session.ws_connect(BINANCE_WS_URL) as ws:
                     logger.info("[binance_ws_listener] Подключено к WebSocket Binance")
 
-                    ticker_buffer = []
+                    ticker_dict = {}  # формат: { "BTCUSDT": { ...текущий тикер... }, ... }
                     last_process_time = time.time()
 
                     async for msg in ws:
@@ -114,7 +115,10 @@ async def binance_ws_listener():
                                 data = json.loads(msg.data)
 
                                 if isinstance(data, list):
-                                    ticker_buffer.extend(data)
+                                    for ticker in data:
+                                        pair = ticker.get("s")
+                                        if pair:
+                                            ticker_dict[pair] = ticker  # сохраняем только последний тикер по паре
                                 else:
                                     logger.warning("[binance_ws_listener] Получены данные не в виде списка")
 
@@ -123,19 +127,21 @@ async def binance_ws_listener():
                             except Exception as e:
                                 logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
 
-                            if now - last_process_time >= 7:
-                                if ticker_buffer:
-                                    logger.info(f"[binance_ws_listener] Обработка {len(ticker_buffer)} тикеров")
+                            if now - last_process_time >= 10:
+                                if ticker_dict:
+                                    logger.info(f"[binance_ws_listener] Обработка {len(ticker_dict)} тикеров")
 
                                     alerts = await get_cached_alerts_with_users(ttl=15)
-                                    # Собираем все пары
-                                    all_pairs = {ticker["s"] for ticker in ticker_buffer}
+                                    all_pairs = set(ticker_dict.keys())
                                     historical_prices = await get_bulk_price_history(all_pairs)
 
-                                    # Передаём сразу список тикеров, а не таски
-                                    await process_tickers(ticker_buffer, alerts, historical_prices)
+                                    await process_tickers(
+                                        list(ticker_dict.values()),  # только уникальные тикеры
+                                        alerts,
+                                        historical_prices
+                                    )
 
-                                    ticker_buffer.clear()
+                                    ticker_dict.clear()
 
                                 last_process_time = now
 
