@@ -3,7 +3,6 @@ import datetime
 import json
 import logging
 import time
-from collections import defaultdict
 from typing import Any
 
 import aiohttp
@@ -23,25 +22,12 @@ async def process_tickers(tickers: list[dict], alerts: list[dict], historical_pr
     """
     Обрабатывает список тикеров без создания задач.
     """
-    # Группируем алерты по паре
-    alerts_by_pair = defaultdict(list)
-    for alert in alerts:
-        pair = alert.get('pair')
-        if pair:
-            alerts_by_pair[pair].append(alert)
-
-    # Создаём задачи на обработку тикеров
-    tasks = []
     for ticker in tickers:
         try:
-            pair = ticker.get("s")
-            pair_alerts = alerts_by_pair.get(pair, [])
-            tasks.append(handle_ticker(ticker, pair_alerts, historical_prices))
+            await handle_ticker(ticker, alerts, historical_prices)
         except Exception as e:
-            logger.exception(f"[process_tickers] Ошибка при подготовке тикера: {ticker.get('s')}")
+            logger.exception(f"[process_tickers] Ошибка при обработке тикера: {ticker.get('s')}")
 
-    # Параллельный запуск
-    await asyncio.gather(*tasks, return_exceptions=True)
 
 async def get_bulk_price_history(pairs: set[str]) -> dict[str, dict[str, list[Any]]]:
     """
@@ -50,18 +36,17 @@ async def get_bulk_price_history(pairs: set[str]) -> dict[str, dict[str, list[An
     :return: Словарь формата { "BTCUSDT": { "12:00:00": [price, %], ... }, ... }
     """
     result = {}
-    redis_keys = list(pairs)
-    redis_data = await redis_client.mget(*redis_keys)
-
-
-    for key, raw_data in zip(redis_keys, redis_data):
+    for pair in pairs:
+        redis_key = f"{pair}"
+        raw_data = await redis_client.get(redis_key)
         if raw_data:
             try:
-                result[key] = json.loads(raw_data)
+                result[pair] = json.loads(raw_data)
             except json.JSONDecodeError:
-                result[key] = {}
+                logger.warning(f"[get_bulk_price_history] Ошибка декодирования JSON для пары {pair}")
+                result[pair] = {}
         else:
-            result[key] = {}
+            result[pair] = {}
 
     return result
 
@@ -83,7 +68,6 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Получаем сохранённую историю для этой пары
         redis_data = historical_prices.get(pair)
         if not redis_data:
-            #logger.warning(f"[handle_ticker] Нет исторических данных по паре {pair}")
             return
 
         # Сортировка времени истории один раз
@@ -92,13 +76,13 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Подготовка текущего времени
         now_dt = datetime.datetime.now()
         now_ts = time.time()
-        print(alerts)
 
         # Создание задач
         tasks = [
             check_alert_for_user(alert, pair, redis_data, price_now, sorted_price_keys, now_dt, now_ts)
             for alert in alerts
         ]
+
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -109,6 +93,7 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
 async def binance_ws_listener():
     """
     Слушает Binance WebSocket, накапливает тикеры и обрабатывает их каждые 10 секунд.
+    Сохраняются только последние значения уникальных торговых пар.
     """
     logger.info("[binance_ws_listener] Подключение к Binance WebSocket...")
 
@@ -118,7 +103,7 @@ async def binance_ws_listener():
                 async with session.ws_connect(BINANCE_WS_URL) as ws:
                     logger.info("[binance_ws_listener] Подключено к WebSocket Binance")
 
-                    ticker_buffer = []
+                    ticker_dict = {}  # формат: { "BTCUSDT": { ...текущий тикер... }, ... }
                     last_process_time = time.time()
 
                     async for msg in ws:
@@ -127,10 +112,12 @@ async def binance_ws_listener():
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
-                                print(data)
 
                                 if isinstance(data, list):
-                                    ticker_buffer.extend(data)
+                                    for ticker in data:
+                                        pair = ticker.get("s")
+                                        if pair:
+                                            ticker_dict[pair] = ticker  # сохраняем только последний тикер по паре
                                 else:
                                     logger.warning("[binance_ws_listener] Получены данные не в виде списка")
 
@@ -140,18 +127,20 @@ async def binance_ws_listener():
                                 logger.exception(f"[binance_ws_listener] Ошибка при обработке сообщения: {e}")
 
                             if now - last_process_time >= 10:
-                                if ticker_buffer:
-                                    logger.info(f"[binance_ws_listener] Обработка {len(ticker_buffer)} тикеров")
+                                if ticker_dict:
+                                    logger.info(f"[binance_ws_listener] Обработка {len(ticker_dict)} тикеров")
 
                                     alerts = await get_cached_alerts_with_users(ttl=15)
-                                    # Собираем все пары
-                                    all_pairs = {ticker["s"] for ticker in ticker_buffer}
+                                    all_pairs = set(ticker_dict.keys())
                                     historical_prices = await get_bulk_price_history(all_pairs)
 
-                                    # Передаём сразу список тикеров, а не таски
-                                    await process_tickers(ticker_buffer, alerts, historical_prices)
+                                    await process_tickers(
+                                        list(ticker_dict.values()),  # только уникальные тикеры
+                                        alerts,
+                                        historical_prices
+                                    )
 
-                                    ticker_buffer.clear()
+                                    ticker_dict.clear()
 
                                 last_process_time = now
 
