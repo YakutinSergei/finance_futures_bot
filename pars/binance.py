@@ -131,6 +131,7 @@ async def binance_ws_listener():
                                     logger.info(f"[binance_ws_listener] Обработка {len(ticker_dict)} тикеров")
 
                                     alerts = await get_cached_alerts_with_users(ttl=15)
+                                
                                     all_pairs = set(ticker_dict.keys())
                                     historical_prices = await get_bulk_price_history(all_pairs)
 

@@ -19,6 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+
 async def check_alerts(
         users: List[Dict],
         redis_data: Dict[str, Dict],
@@ -83,7 +84,6 @@ async def check_alerts(
                             except ZeroDivisionError:
                                 logger.error(f"Деление на ноль при расчете для пары {pair}")
                                 continue
-                            print(f'{change_percent=}')
                             # Проверка триггеров
                             try:
                                 if change_percent >= percent_up:
@@ -217,7 +217,7 @@ async def check_alert_for_user(
         percent = ((price_now - hist_price) / hist_price) * 100
 
         last_sent_time = sent_alerts_cache.get(telegram_id, {}).get(pair)
-        if last_sent_time and now_ts - last_sent_time < 5 * 60:
+        if last_sent_time and now_ts - last_sent_time < 3600:
             return
 
         # Готовим текст
