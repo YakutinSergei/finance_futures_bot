@@ -68,7 +68,6 @@ async def handle_ticker(ticker: dict[str, Any], alerts: list[dict[str, Any]], hi
         # Получаем сохранённую историю для этой пары
         redis_data = historical_prices.get(pair)
         if not redis_data:
-            logger.warning(f"[handle_ticker] Нет исторических данных по паре {pair}")
             return
 
         # Сортировка времени истории один раз
